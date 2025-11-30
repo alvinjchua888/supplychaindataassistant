@@ -144,21 +144,33 @@ SQL Query:"""
             
         Returns:
             The generated SQL query.
+            
+        Raises:
+            ValueError: If the API call fails due to configuration or rate limits.
         """
-        response = openai.chat.completions.create(
-            model=self.openai_model,
-            messages=[
-                {"role": "system", "content": "You are a SQL expert that converts natural language to SQL queries."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.1,
-            max_tokens=500
-        )
-        
-        sql_query = response.choices[0].message.content.strip()
-        # Remove markdown code blocks if present
-        sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
-        return sql_query
+        try:
+            response = openai.chat.completions.create(
+                model=self.openai_model,
+                messages=[
+                    {"role": "system", "content": "You are a SQL expert that converts natural language to SQL queries."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=500
+            )
+            
+            sql_query = response.choices[0].message.content.strip()
+            # Remove markdown code blocks if present
+            sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
+            return sql_query
+        except openai.AuthenticationError as e:
+            raise ValueError(f"OpenAI authentication failed. Please check your API key: {e}")
+        except openai.RateLimitError as e:
+            raise ValueError(f"OpenAI rate limit exceeded. Please try again later: {e}")
+        except openai.APIError as e:
+            raise ValueError(f"OpenAI API error: {e}")
+        except Exception as e:
+            raise ValueError(f"Unexpected error calling OpenAI API: {e}")
     
     def generate_sql_with_gemini(self, prompt: str) -> str:
         """
@@ -169,12 +181,19 @@ SQL Query:"""
             
         Returns:
             The generated SQL query.
+            
+        Raises:
+            ValueError: If the API call fails.
         """
-        response = self.gemini_client.generate_content(prompt)
-        sql_query = response.text.strip()
-        # Remove markdown code blocks if present
-        sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
-        return sql_query
+        try:
+            response = self.gemini_client.generate_content(prompt)
+            sql_query = response.text.strip()
+            # Remove markdown code blocks if present
+            sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
+            return sql_query
+        except Exception as e:
+            # Gemini API exceptions may vary, catch broadly and provide helpful message
+            raise ValueError(f"Gemini API error: {e}. Please check your API key and rate limits.")
     
     def natural_language_to_sql(self, natural_language_query: str) -> str:
         """
@@ -195,6 +214,44 @@ SQL Query:"""
         else:
             raise ValueError(f"Unsupported LLM provider: {self.llm_provider}")
     
+    def validate_sql_query(self, sql_query: str) -> bool:
+        """
+        Validate SQL query for basic safety checks.
+        
+        Args:
+            sql_query: The SQL query to validate.
+            
+        Returns:
+            True if the query passes basic validation.
+            
+        Raises:
+            ValueError: If the query contains suspicious patterns.
+        """
+        # Convert to uppercase for checking
+        sql_upper = sql_query.upper()
+        
+        # List of dangerous SQL operations that should not be allowed
+        dangerous_operations = [
+            'DROP ', 'DELETE ', 'TRUNCATE ', 'INSERT ', 'UPDATE ',
+            'CREATE ', 'ALTER ', 'GRANT ', 'REVOKE ', 'EXEC ',
+            'EXECUTE ', '--', '/*', '*/', 'xp_', 'sp_'
+        ]
+        
+        for operation in dangerous_operations:
+            if operation in sql_upper:
+                raise ValueError(
+                    f"SQL query contains potentially dangerous operation: '{operation.strip()}'. "
+                    f"Only SELECT queries are allowed for safety."
+                )
+        
+        # Ensure query starts with SELECT
+        if not sql_upper.strip().startswith('SELECT'):
+            raise ValueError(
+                "Only SELECT queries are allowed. Query must start with SELECT."
+            )
+        
+        return True
+    
     def execute_sql(self, sql_query: str) -> list:
         """
         Execute a SQL query on Databricks and return the results.
@@ -204,7 +261,13 @@ SQL Query:"""
             
         Returns:
             A list of dictionaries containing the query results.
+            
+        Raises:
+            ValueError: If the query fails validation.
         """
+        # Validate SQL query before execution
+        self.validate_sql_query(sql_query)
+        
         with self.get_databricks_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql_query)
