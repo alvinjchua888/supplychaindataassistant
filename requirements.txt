@@ -1,0 +1,11 @@
+# Core dependencies
+openai>=1.0.0
+google-generativeai>=0.3.0
+python-dotenv>=1.0.0
+
+# Databricks dependencies
+databricks-sql-connector>=2.0.0
+
+# Utility dependencies
+pydantic>=2.0.0
+typing-extensions>=4.0.0
